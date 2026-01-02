@@ -96,6 +96,9 @@
         let lastFireTime = 0;
         const fireRate = 300; // 発射間隔 (ms)
 
+        let vrUI; // VR用UIグループ
+        let scoreTextCanvas, timeTextCanvas;
+
         const scoreElement = document.getElementById('score');
         const timeElement = document.getElementById('time');
         const msgElement = document.getElementById('msg');
@@ -132,11 +135,13 @@
                 renderer.xr.setSession(session);
                 button.textContent = 'EXIT VR';
                 currentSession = session;
+                if(vrUI) vrUI.visible = true;
             }
             function onSessionEnded() {
                 currentSession.removeEventListener('end', onSessionEnded);
                 button.textContent = 'ENTER VR';
                 currentSession = null;
+                if(vrUI) vrUI.visible = false;
             }
 
             return button;
@@ -148,13 +153,12 @@
 
         function init() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x111122); // 真っ黒を避けるために少し青みを追加
+            scene.background = new THREE.Color(0x111122);
             scene.fog = new THREE.Fog(0x111122, 10, 50);
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            // VRではカメラの高さはXRデバイスから取得されるため、コンテナ(Group)を使うのが一般的
+            
             const cameraGroup = new THREE.Group();
-            cameraGroup.position.set(0, 0, 0);
             scene.add(cameraGroup);
             cameraGroup.add(camera);
 
@@ -166,7 +170,7 @@
 
             document.body.appendChild(createVRButton(renderer));
 
-            // ライティングの強化
+            // ライティング
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
             scene.add(ambientLight);
 
@@ -174,9 +178,12 @@
             dirLight.position.set(5, 10, 7.5);
             scene.add(dirLight);
 
-            // 床の作成
+            // 床
             const grid = new THREE.GridHelper(100, 40, 0x00ff00, 0x444444);
             scene.add(grid);
+
+            // VR内UIの作成
+            createVRUI(camera);
 
             window.addEventListener('resize', onWindowResize, false);
 
@@ -184,11 +191,66 @@
             startGame();
         }
 
+        // VR空間用のUIパネル作成
+        function createVRUI(parent) {
+            vrUI = new THREE.Group();
+            vrUI.position.set(0, 0, -1.5); // カメラの少し前に配置
+            vrUI.visible = false; // VRセッション開始まで非表示
+            parent.add(vrUI);
+
+            scoreTextCanvas = createTextCanvas('Score: 0');
+            const scorePlane = new THREE.Mesh(
+                new THREE.PlaneGeometry(0.5, 0.15),
+                new THREE.MeshBasicMaterial({ map: scoreTextCanvas.texture, transparent: true })
+            );
+            scorePlane.position.set(-0.4, 0.3, 0);
+            vrUI.add(scorePlane);
+
+            timeTextCanvas = createTextCanvas('Time: 60s');
+            const timePlane = new THREE.Mesh(
+                new THREE.PlaneGeometry(0.5, 0.15),
+                new THREE.MeshBasicMaterial({ map: timeTextCanvas.texture, transparent: true })
+            );
+            timePlane.position.set(0.4, 0.3, 0);
+            vrUI.add(timePlane);
+
+            // VR用レティクル（3D空間の照準）
+            const reticleGeo = new THREE.RingGeometry(0.015, 0.02, 32);
+            const reticleMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+            const vrReticle = new THREE.Mesh(reticleGeo, reticleMat);
+            vrReticle.position.set(0, 0, -1);
+            vrUI.add(vrReticle);
+        }
+
+        function createTextCanvas(text) {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 256;
+            canvas.height = 64;
+            
+            function update(newText) {
+                context.clearRect(0, 0, canvas.width, canvas.height);
+                context.fillStyle = 'rgba(0,0,0,0.5)';
+                context.fillRect(0, 0, canvas.width, canvas.height);
+                context.font = 'Bold 40px sans-serif';
+                context.fillStyle = '#ffffff';
+                context.textAlign = 'center';
+                context.textBaseline = 'middle';
+                context.fillText(newText, canvas.width / 2, canvas.height / 2);
+                texture.needsUpdate = true;
+            }
+
+            const texture = new THREE.CanvasTexture(canvas);
+            update(text);
+            return { texture, update };
+        }
+
         function startGame() {
             isGameRunning = true;
             score = 0;
             timeLeft = 60;
-            scoreElement.innerText = score;
+            updateUIScore();
+            updateUITime();
             msgElement.style.display = 'none';
 
             const spawnInterval = setInterval(() => {
@@ -201,12 +263,22 @@
 
             const timerInterval = setInterval(() => {
                 timeLeft--;
-                timeElement.innerText = timeLeft;
+                updateUITime();
                 if (timeLeft <= 0) {
                     clearInterval(timerInterval);
                     endGame();
                 }
             }, 1000);
+        }
+
+        function updateUIScore() {
+            scoreElement.innerText = score;
+            if(scoreTextCanvas) scoreTextCanvas.update('Score: ' + score);
+        }
+
+        function updateUITime() {
+            timeElement.innerText = timeLeft;
+            if(timeTextCanvas) timeTextCanvas.update('Time: ' + timeLeft + 's');
         }
 
         function spawnTarget() {
@@ -241,7 +313,9 @@
             const bullet = new THREE.Mesh(geo, mat);
             
             bullet.position.copy(position);
-            bullet.userData.velocity = direction.clone().multiplyScalar(0.4);
+            // 進行方向ベクトルを正規化してから速度を掛ける
+            const velocity = direction.clone().normalize().multiplyScalar(0.4);
+            bullet.userData.velocity = velocity;
             bullet.userData.life = 100;
 
             scene.add(bullet);
@@ -262,9 +336,10 @@
 
         function render() {
             if (isGameRunning) {
-                // VRカメラのワールド方向を取得
-                const direction = new THREE.Vector3(0, 0, -1);
-                direction.applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()));
+                // VRカメラのワールド座標と向きを正しく取得
+                const tempMatrix = new THREE.Matrix4();
+                tempMatrix.extractRotation(camera.matrixWorld);
+                const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
                 
                 const position = new THREE.Vector3();
                 camera.getWorldPosition(position);
@@ -294,7 +369,7 @@
                         scene.remove(b);
                         bullets.splice(i, 1);
                         score += 10;
-                        scoreElement.innerText = score;
+                        updateUIScore();
                         break;
                     }
                 }
