@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>VR SBS 3D Viewer</title>
+    <title>VR SBS 3D Viewer - Distant View</title>
     <style>
         body {
             margin: 0;
@@ -31,7 +31,6 @@
             gap: 15px;
             z-index: 20;
         }
-        /* Style for the VR Button provided by Three.js */
         #VRButton {
             background: #222 !important;
             border: 1px solid #fff !important;
@@ -53,14 +52,13 @@
 <body>
     <div id="info">
         <h1 style="margin: 0; font-size: 1.5rem;">VR 3D Model Viewer</h1>
-        <p>スマートフォンを横向きにしてボタンを押してください</p>
+        <p>遠くから眺めるモード</p>
     </div>
 
     <div id="ui-container">
-        <!-- VRButton will be inserted here by JS -->
         <div id="vr-btn-target"></div>
         <div class="debug-msg">
-            ※ボタンが表示されない場合は、HTTPS環境（https://...）で開いているか確認してください。
+            ※HTTPS環境で「ENTER VR」を押すと2画面になります
         </div>
     </div>
 
@@ -77,50 +75,57 @@
         import * as THREE from 'three';
         import { VRButton } from 'three/addons/webxr/VRButton.js';
 
-        let camera, scene, renderer, mesh;
+        let camera, scene, renderer, mesh, stars;
 
         init();
         animate();
 
         function init() {
-            // Setup Scene
+            // シーンの設定
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x050505);
-            // Add grid for spatial reference
-            const grid = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
-            grid.position.y = -2;
-            scene.add(grid);
+            scene.background = new THREE.Color(0x020205);
 
-            // Setup Camera
+            // カメラの設定
+            // 以前の 4 から 8 に変更し、より遠くから見るように設定
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 1, 4);
+            camera.position.set(0, 1.5, 8); 
 
-            // Setup Lighting
-            const mainLight = new THREE.PointLight(0xffffff, 100);
-            mainLight.position.set(2, 3, 4);
+            // ライティング
+            const mainLight = new THREE.PointLight(0xffffff, 150);
+            mainLight.position.set(5, 5, 5);
             scene.add(mainLight);
-            scene.add(new THREE.AmbientLight(0x333333));
+            scene.add(new THREE.AmbientLight(0x444444));
 
-            // Create 3D Object
-            const geometry = new THREE.TorusKnotGeometry(0.8, 0.25, 120, 20);
+            // 3Dオブジェクト（少し大きくして、遠くからでも存在感を出します）
+            const geometry = new THREE.TorusKnotGeometry(1.2, 0.4, 150, 20);
             const material = new THREE.MeshPhongMaterial({ 
-                color: 0x3399ff, 
-                shininess: 80,
-                specular: 0x444444
+                color: 0x00d2ff, 
+                shininess: 100,
+                specular: 0x555555
             });
             mesh = new THREE.Mesh(geometry, material);
             scene.add(mesh);
 
-            // Setup Renderer
+            // 背景にパーティクル（星）を追加して距離感を演出
+            const starGeometry = new THREE.BufferGeometry();
+            const starCount = 1000;
+            const posArray = new Float32Array(starCount * 3);
+            for(let i = 0; i < starCount * 3; i++) {
+                posArray[i] = (Math.random() - 0.5) * 50;
+            }
+            starGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+            const starMaterial = new THREE.PointsMaterial({ size: 0.05, color: 0xffffff });
+            stars = new THREE.Points(starGeometry, starMaterial);
+            scene.add(stars);
+
+            // レンダラーの設定
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            
-            // CRITICAL: Enable WebXR for VR Mode (Dual-screen SBS)
-            renderer.xr.enabled = true;
+            renderer.xr.enabled = true; // VRモードを有効化
             document.body.appendChild(renderer.domElement);
 
-            // Add VR Button to the UI
+            // VRボタンの設置
             const vrButtonElement = VRButton.createButton(renderer);
             document.getElementById('vr-btn-target').appendChild(vrButtonElement);
 
@@ -138,9 +143,12 @@
         }
 
         function render() {
-            // Rotate the model
-            mesh.rotation.y += 0.01;
-            mesh.rotation.z += 0.005;
+            // オブジェクトの回転
+            mesh.rotation.y += 0.008;
+            mesh.rotation.x += 0.003;
+
+            // 星をゆっくり動かして奥行き感を出す
+            stars.rotation.y += 0.0005;
 
             renderer.render(scene, camera);
         }
